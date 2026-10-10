@@ -319,7 +319,8 @@ void NutServerComponent::process_command(NutClient &client, const std::string &c
     handle_upsdver(client);
   }
   // Commands requiring authentication
-  else if (!password_.empty() && !client.is_authenticated()) {
+  // else if (!password_.empty() && !client.is_authenticated()) {
+  else if (!password_.empty() && !client.is_authenticated() && (cmd == "INSTCMD" || cmd == "SET" || cmd == "FSD")) {
     send_error(client, "ACCESS-DENIED");
   } else {
     // Authenticated commands
