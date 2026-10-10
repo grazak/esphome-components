@@ -240,7 +240,7 @@ bool ApcHidProtocol::read_data(UpsData &data) {
     // Read manufacturer from USB Manufacturer string descriptor (index 3)
     // NUT shows: UPS.PowerSummary.iManufacturer, Value: 3 → Manufacturer: "APC"
     std::string manufacturer_string;
-    esp_err_t mfr_ret = parent_->usb_get_string_descriptor(3, manufacturer_string);
+    esp_err_t mfr_ret = parent_->usb_get_string_descriptor(1, manufacturer_string);
     
     if (mfr_ret == ESP_OK && !manufacturer_string.empty()) {
       data.device.manufacturer = manufacturer_string;
@@ -253,7 +253,7 @@ bool ApcHidProtocol::read_data(UpsData &data) {
     // Read model from USB Product string descriptor (index 1)
     // NUT shows: Product: "Back-UPS ES 700G" but need to parse out firmware info
     std::string product_string;
-    esp_err_t prod_ret = parent_->usb_get_string_descriptor(1, product_string);
+    esp_err_t prod_ret = parent_->usb_get_string_descriptor(2, product_string);
     
     if (prod_ret == ESP_OK && !product_string.empty()) {
       // Parse out just the model name, removing firmware info like "FW:841.H1 .D USB FW:H1"
