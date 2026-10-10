@@ -18,18 +18,44 @@
 namespace esphome {
 namespace ups_hid {
 
-// Force the protocol files into the build so they self-register
+// Protocol creators (defined in protocol_*.cpp)
 std::unique_ptr<UpsProtocolBase> create_apc_protocol(UpsHidComponent *parent);
 std::unique_ptr<UpsProtocolBase> create_cyberpower_protocol(UpsHidComponent *parent);
 std::unique_ptr<UpsProtocolBase> create_generic_protocol(UpsHidComponent *parent);
-using UpsProtocolCreator = std::unique_ptr<UpsProtocolBase> (*)(UpsHidComponent *);
-__attribute__((used)) static const UpsProtocolCreator ups_hid_keep_protocols[] = {
-    &create_apc_protocol,
-    &create_cyberpower_protocol,
-    &create_generic_protocol,
-};
+
+// Register protocols at setup() time instead of during static initialisation
+static void register_builtin_protocols() {
+  static bool done = false;
+  if (done) return;
+  done = true;
+
+  ProtocolFactory::ProtocolInfo apc;
+  apc.creator = create_apc_protocol;
+  apc.name = "APC HID Protocol";
+  apc.description = "APC Back-UPS and Smart-UPS HID protocol";
+  apc.supported_vendors = {0x051D};
+  apc.priority = 100;
+  ProtocolFactory::register_protocol_for_vendor(0x051D, apc);
+
+  ProtocolFactory::ProtocolInfo cp;
+  cp.creator = create_cyberpower_protocol;
+  cp.name = "CyberPower HID Protocol";
+  cp.description = "CyberPower CP series HID protocol";
+  cp.supported_vendors = {0x0764};
+  cp.priority = 100;
+  ProtocolFactory::register_protocol_for_vendor(0x0764, cp);
+
+  ProtocolFactory::ProtocolInfo gen;
+  gen.creator = create_generic_protocol;
+  gen.name = "Generic HID Protocol";
+  gen.description = "Universal HID protocol fallback";
+  gen.supported_vendors = {};
+  gen.priority = 10;
+  ProtocolFactory::register_fallback_protocol(gen);
+}
 
 void UpsHidComponent::setup() {
+  register_builtin_protocols();
   ESP_LOGCONFIG(TAG, log_messages::SETTING_UP);
   
   if (!initialize_transport()) {
