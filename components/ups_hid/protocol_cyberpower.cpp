@@ -1471,4 +1471,4 @@ std::unique_ptr<UpsProtocolBase> create_cyberpower_protocol(UpsHidComponent* par
 } // namespace esphome
 
 // Register CyberPower protocol for vendor ID 0x0764
-REGISTER_UPS_PROTOCOL_FOR_VENDOR(0x0764, cyberpower_hid_protocol, esphome::ups_hid::create_cyberpower_protocol, "CyberPower HID Protocol", "CyberPower CP series HID protocol with comprehensive sensor support and test functionality", 100);
+// GK 20261010 REGISTER_UPS_PROTOCOL_FOR_VENDOR(0x0764, cyberpower_hid_protocol, esphome::ups_hid::create_cyberpower_protocol, "CyberPower HID Protocol", "CyberPower CP series HID protocol with comprehensive sensor support and test functionality", 100);
