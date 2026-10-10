@@ -18,6 +18,17 @@
 namespace esphome {
 namespace ups_hid {
 
+// Force the protocol files into the build so they self-register
+std::unique_ptr<UpsProtocolBase> create_apc_protocol(UpsHidComponent *parent);
+std::unique_ptr<UpsProtocolBase> create_cyberpower_protocol(UpsHidComponent *parent);
+std::unique_ptr<UpsProtocolBase> create_generic_protocol(UpsHidComponent *parent);
+using UpsProtocolCreator = std::unique_ptr<UpsProtocolBase> (*)(UpsHidComponent *);
+__attribute__((used)) static const UpsProtocolCreator ups_hid_keep_protocols[] = {
+    &create_apc_protocol,
+    &create_cyberpower_protocol,
+    &create_generic_protocol,
+};
+
 void UpsHidComponent::setup() {
   ESP_LOGCONFIG(TAG, log_messages::SETTING_UP);
   
