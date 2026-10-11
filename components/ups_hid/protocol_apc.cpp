@@ -84,7 +84,7 @@ static const uint8_t APC_PRESENT_NEED_REPLACEMENT = 0x80;   // Bit 7: Need repla
 static const uint8_t APC_PRESENT_OVERLOAD = 0x01;          // Bit 0 of second byte: Overload
 
 // APC-specific date conversion (hex-as-decimal format)
-static std::string convert_apc_date(uint32_t apc_date) {
+[[maybe_unused]] static std::string convert_apc_date(uint32_t apc_date) {
   if (apc_date == 0) return status::UNKNOWN;
   
   // APC uses hex-as-decimal format, e.g., 0x102202 = 10/22/02
@@ -413,7 +413,7 @@ public:
   
   // Power and battery parsing
   static void parse_battery_report(const HidReport &report, UpsData &data);
-  static void parse_power_report(const HidReport &report, UpsData &data);
+  [[maybe_unused]] static void parse_power_report(const HidReport &report, UpsData &data);
   static void parse_power_summary_report(const HidReport &report, UpsData &data);
   static void parse_voltage_report(const HidReport &report, UpsData &data);
   static void parse_input_voltage_report(const HidReport &report, UpsData &data);
@@ -651,7 +651,7 @@ void ApcReportParser::parse_battery_report(const HidReport &report, UpsData &dat
     if (runtime_raw > 0 && runtime_raw < 65535) { // Sanity check
       // Convert seconds to minutes to match ESPHome sensor expectations
       data.battery.runtime_minutes = static_cast<float>(runtime_raw) / 60.0f;
-      ESP_LOGI(APC_HID_TAG, "Runtime: %d seconds (%.1f minutes)", runtime_raw, data.battery.runtime_minutes);
+      ESP_LOGI(APC_HID_TAG, "Runtime: %u seconds (%.1f minutes)", (unsigned) runtime_raw, data.battery.runtime_minutes);
     } else {
       // Set estimate based on battery level if raw value seems invalid
       data.battery.runtime_minutes = data.battery.level * 0.5f; 
