@@ -193,6 +193,10 @@ void NutServerComponent::accept_clients() {
   // Set client socket to non-blocking
   int flags = fcntl(client_socket, F_GETFL, 0);
   fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
+
+  // Send short NUT replies immediately instead of waiting to batch them (Nagle)
+  int nodelay = 1;
+  setsockopt(client_socket, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
   
   // Find available client slot
   std::lock_guard<std::mutex> lock(clients_mutex_);
@@ -227,19 +231,34 @@ void NutServerComponent::handle_client(NutClient &client) {
   int bytes_received = recv(client.socket_fd, buffer, sizeof(buffer) - 1, 0);
   
   if (bytes_received > 0) {
-    buffer[bytes_received] = '\0';
-    
-    // Remove trailing newline
-    char *newline = strchr(buffer, '\n');
-    if (newline) *newline = '\0';
-    newline = strchr(buffer, '\r');
-    if (newline) *newline = '\0';
-    
     client.last_activity = millis();
-    
-    ESP_LOGV(TAG, "Received command: %s", buffer);
-    process_command(client, std::string(buffer));
-    
+
+    // TCP is a byte stream: one recv() can hold several commands, or part of one.
+    // Buffer the bytes and process every complete line, keeping any partial line
+    // for the next recv(). (Previously only the first command was handled and the
+    // rest were dropped, leaving the client waiting for replies that never came.)
+    client.rx_buffer.append(buffer, bytes_received);
+
+    size_t newline_pos;
+    while (client.is_active() && (newline_pos = client.rx_buffer.find('\n')) != std::string::npos) {
+      std::string line = client.rx_buffer.substr(0, newline_pos);
+      client.rx_buffer.erase(0, newline_pos + 1);
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+      if (line.empty()) {
+        continue;
+      }
+      ESP_LOGV(TAG, "Received command: %s", line.c_str());
+      process_command(client, line);
+    }
+
+    // Guard against a client sending a very long line with no newline
+    if (client.rx_buffer.size() > 4 * MAX_COMMAND_LENGTH) {
+      ESP_LOGW(TAG, "Discarding over-long command from %s", client.remote_ip.c_str());
+      client.rx_buffer.clear();
+    }
+
   } else if (bytes_received == 0) {
     // Client disconnected
     ESP_LOGD(TAG, "Client disconnected");

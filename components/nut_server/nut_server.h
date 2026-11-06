@@ -56,6 +56,7 @@ struct NutClient {
   std::string remote_ip;
   std::string temp_username;  // For USERNAME/PASSWORD flow
   std::string temp_password;  // For USERNAME/PASSWORD flow
+  std::string rx_buffer;      // Received bytes not yet terminated by a newline
   
   bool is_authenticated() const { return state == ClientState::AUTHENTICATED; }
   bool is_active() const { return socket_fd >= 0 && state != ClientState::DISCONNECTED; }
@@ -69,6 +70,7 @@ struct NutClient {
     remote_ip.clear();
     temp_username.clear();
     temp_password.clear();
+    rx_buffer.clear();
   }
 };
 
@@ -174,4 +176,4 @@ private:
 };
 
 }  // namespace nut_server
-}  // namespace esphome
+}  // namespace esphome
