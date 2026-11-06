@@ -832,6 +832,17 @@ std::string NutServerComponent::get_ups_var(const std::string &var_name) {
     if (var_name == "output.voltage") {
       float output_voltage = ups_hid_->get_output_voltage();
       if (output_voltage > 0) return format_nut_value(std::to_string(output_voltage));
+      // Many UPSes (e.g. APC Back-UPS ES) have no output voltage report. Some
+      // clients (WinNUT) poll output.voltage every cycle and become unstable
+      // when it answers ERR VAR-NOT-SUPPORTED, so report a best estimate:
+      // line-interactive units pass mains through when online, and the
+      // inverter targets the nominal voltage when on battery.
+      float input_voltage = ups_hid_->get_input_voltage();
+      if (input_voltage > 100.0f) return format_nut_value(std::to_string(input_voltage));
+      if (!std::isnan(ups_data.power.output_voltage_nominal) && ups_data.power.output_voltage_nominal > 0)
+        return format_nut_value(std::to_string(ups_data.power.output_voltage_nominal));
+      if (!std::isnan(ups_data.power.input_voltage_nominal) && ups_data.power.input_voltage_nominal > 0)
+        return format_nut_value(std::to_string(ups_data.power.input_voltage_nominal));
     }
     if (var_name == "output.voltage.nominal" && !std::isnan(ups_data.power.output_voltage_nominal)) {
       return format_nut_value(std::to_string(ups_data.power.output_voltage_nominal));
