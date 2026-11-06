@@ -77,6 +77,13 @@ void UpsHidComponent::update() {
   
   // Check if protocol detection is needed
   if (!active_protocol_) {
+    // Back-off after repeated failures: wait before trying detection again
+    if (detection_retry_after_ != 0) {
+      if (static_cast<int32_t>(millis() - detection_retry_after_) < 0) {
+        return;
+      }
+      detection_retry_after_ = 0;
+    }
     ESP_LOGI(TAG, log_messages::ATTEMPTING_DETECTION);
     if (detect_protocol()) {
       ESP_LOGI(TAG, log_messages::PROTOCOL_DETECTED);
@@ -86,8 +93,13 @@ void UpsHidComponent::update() {
       ESP_LOGW(TAG, log_messages::DETECTION_FAILED, (unsigned) consecutive_failures_);
       
       if (consecutive_failures_ > max_consecutive_failures_) {
-        ESP_LOGE(TAG, log_messages::TOO_MANY_FAILURES);
-        mark_failed();
+        // Previously mark_failed() stopped the component until reboot.
+        // Keep retrying instead, so monitoring recovers on its own.
+        ESP_LOGE(TAG, "Too many consecutive protocol detection failures, retrying in %u s",
+                 (unsigned) (DETECTION_BACKOFF_MS / 1000));
+        detection_retry_after_ = millis() + DETECTION_BACKOFF_MS;
+        if (detection_retry_after_ == 0) detection_retry_after_ = 1;
+        consecutive_failures_ = 0;
       }
       return;
     }

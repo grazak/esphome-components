@@ -94,6 +94,14 @@ namespace esphome
         return ups_data_; 
       }
       std::string get_protocol_name() const;
+
+      // True when the last successful UPS read is recent enough to be trusted.
+      // Used by the NUT server to report DATA-STALE instead of serving old values.
+      bool has_fresh_data() const {
+        if (!active_protocol_ || last_successful_read_ == 0) return false;
+        uint32_t max_age = std::max<uint32_t>(30000, 3 * this->get_update_interval());
+        return (millis() - last_successful_read_) <= max_age;
+      }
       uint32_t get_protocol_timeout() const { return protocol_timeout_ms_; }
       float get_fallback_nominal_voltage() const { return fallback_nominal_voltage_; }
       
@@ -156,6 +164,8 @@ namespace esphome
       uint32_t last_successful_read_{0};
       uint32_t consecutive_failures_{0};
       uint32_t max_consecutive_failures_{5};  // Limit re-detection attempts
+      uint32_t detection_retry_after_{0};     // millis() before which detection is paused (0 = no back-off)
+      static constexpr uint32_t DETECTION_BACKOFF_MS = 60000;  // Wait 60 s after repeated detection failures
       UpsData ups_data_;
       mutable std::mutex data_mutex_;  // Protect ups_data_ access
       
@@ -276,4 +286,4 @@ namespace esphome
 
 
   } // namespace ups_hid
-} // namespace esphome
+} // namespace esphome

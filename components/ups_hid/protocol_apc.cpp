@@ -218,14 +218,8 @@ bool ApcHidProtocol::read_data(UpsData &data) {
     ESP_LOGV(APC_HID_TAG, "Failed to read load report");
   }
   
-  // 6. Read output voltage report (legacy voltage reading)
-  HidReport voltage_report;
-  if (read_hid_report(APC_REPORT_ID_OUTPUT_VOLTAGE, voltage_report)) {
-    parse_voltage_report(voltage_report, data);
-    success = true;
-  } else {
-    ESP_LOGV(APC_HID_TAG, "Failed to read voltage report");
-  }
+  // 6. Output voltage: not read. Report 0x09 (PowerSummary.Voltage) is the battery
+  //    voltage on Back-UPS models, not the output voltage, so leave it unset (NaN).
   
   // Set frequency to NaN - not available in debug logs for this APC model
   // Try to read frequency from HID reports
@@ -235,9 +229,10 @@ bool ApcHidProtocol::read_data(UpsData &data) {
   // TIMING FIX: Only read USB string descriptors after successful HID communication
   // This ensures the device is ready and responsive before attempting descriptor access
   if (success) {
-    ESP_LOGD(APC_HID_TAG, "APC HID data read successful, now reading device info...");
+   if (!static_cache_valid_ || static_refresh_counter_ == 0) {
+    ESP_LOGD(APC_HID_TAG, "APC HID data read successful, now reading static device info...");
     
-    // Read manufacturer from USB Manufacturer string descriptor (index 3)
+    // Read manufacturer from USB string descriptor 1 (Back-UPS ES: "American Power Conversion")
     // NUT shows: UPS.PowerSummary.iManufacturer, Value: 3 → Manufacturer: "APC"
     std::string manufacturer_string;
     esp_err_t mfr_ret = parent_->usb_get_string_descriptor(1, manufacturer_string);
@@ -250,7 +245,7 @@ bool ApcHidProtocol::read_data(UpsData &data) {
       ESP_LOGW(APC_HID_TAG, "Failed to read USB Manufacturer descriptor: %s, leaving unset", esp_err_to_name(mfr_ret));
     }
     
-    // Read model from USB Product string descriptor (index 1)
+    // Read model from USB Product string descriptor 2 (e.g. "Back-UPS ES 850G2 FW:...")
     // NUT shows: Product: "Back-UPS ES 700G" but need to parse out firmware info
     std::string product_string;
     esp_err_t prod_ret = parent_->usb_get_string_descriptor(2, product_string);
@@ -272,10 +267,20 @@ bool ApcHidProtocol::read_data(UpsData &data) {
       ESP_LOGW(APC_HID_TAG, "Failed to read USB Product descriptor: %s, leaving model unset", esp_err_to_name(prod_ret));
     }
     
-    // Read additional device information (serial, firmware, etc.)
+    // Static values: serial, firmware, nominal ratings, thresholds, dates
+    read_static_values(data);
+    static_cache_ = data;
+    // Retry next update if the device strings could not be read
+    static_cache_valid_ = !data.device.manufacturer.empty();
+   } else {
+    apply_static_values(static_cache_, data);
+   }
+   static_refresh_counter_ = (static_refresh_counter_ + 1) % STATIC_REFRESH_CYCLES;
+
+    // Settable values (beeper, sensitivity) - read every update
     read_device_information(data);
     
-    // Read missing dynamic values identified from NUT analysis
+    // Changing values (battery voltage, delays, test result, battery status)
     read_missing_dynamic_values(data);
     
     ESP_LOGV(APC_HID_TAG, "Successfully read UPS data");
@@ -906,16 +911,7 @@ void ApcHidProtocol::read_device_information(UpsData &data) {
   
   // Read serial number from standard USB HID report (same as CyberPower)
   // NUT debug shows: UPS.PowerSummary.iSerialNumber, ReportID: usb::REPORT_ID_SERIAL_NUMBER, Value: 2
-  HidReport serial_report;
-  if (read_hid_report(usb::REPORT_ID_SERIAL_NUMBER, serial_report)) {
-    parse_serial_number_report(serial_report, data);
-  }
-  
-  // Try reading firmware version
-  HidReport firmware_report;
-  if (read_hid_report(APC_REPORT_ID_FIRMWARE, firmware_report)) {
-    parse_firmware_version_report(firmware_report, data);
-  }
+  // (Serial number and firmware are read in read_static_values())
   
   // Try reading beeper status
   HidReport beeper_report;
@@ -1015,7 +1011,7 @@ void ApcHidProtocol::parse_firmware_version_report(const HidReport &report, UpsD
   // Log shows: USB string descriptor 1: "Back-UPS ES 700G FW:871.O4 .I USB FW:O4"
   ESP_LOGD(APC_HID_TAG, "Trying to read firmware from USB Product string descriptor (index 1)");
   std::string product_with_firmware;
-  esp_err_t product_ret = parent_->usb_get_string_descriptor(1, product_with_firmware);
+  esp_err_t product_ret = parent_->usb_get_string_descriptor(2, product_with_firmware);
   
   if (product_ret == ESP_OK && !product_with_firmware.empty() && 
       product_with_firmware.find("FW:") != std::string::npos) {
@@ -1237,21 +1233,27 @@ void ApcHidProtocol::parse_input_sensitivity_report(const HidReport &report, Ups
   }
 }
 
-void ApcHidProtocol::read_missing_dynamic_values(UpsData &data) {
-  ESP_LOGD(APC_HID_TAG, "Reading APC missing dynamic values from NUT analysis...");
-  
-  // 1. Battery voltage nominal (Report APC_REPORT_ID_BATTERY_VOLTAGE_NOMINAL)
+void ApcHidProtocol::read_static_values(UpsData &data) {
+  ESP_LOGD(APC_HID_TAG, "Reading APC static values...");
+
+  // Serial number
+  HidReport serial_report;
+  if (read_hid_report(usb::REPORT_ID_SERIAL_NUMBER, serial_report)) {
+    parse_serial_number_report(serial_report, data);
+  }
+
+  // Firmware version
+  HidReport firmware_report;
+  if (read_hid_report(APC_REPORT_ID_FIRMWARE, firmware_report)) {
+    parse_firmware_version_report(firmware_report, data);
+  }
+
+  // Battery voltage nominal (Report APC_REPORT_ID_BATTERY_VOLTAGE_NOMINAL)
   HidReport battery_voltage_nominal_report;
   if (read_hid_report(APC_REPORT_ID_BATTERY_VOLTAGE_NOMINAL, battery_voltage_nominal_report)) {
     parse_battery_voltage_nominal_report(battery_voltage_nominal_report, data);
   }
-  
-  // 1b. Battery voltage actual (Report APC_REPORT_ID_BATTERY_VOLTAGE) - MISSING from original implementation
-  HidReport battery_voltage_report;
-  if (read_hid_report(APC_REPORT_ID_BATTERY_VOLTAGE, battery_voltage_report)) {
-    parse_battery_voltage_actual_report(battery_voltage_report, data);
-  }
-  
+
   // 2. Input voltage nominal (Report APC_REPORT_ID_INPUT_VOLTAGE_NOMINAL)
   HidReport input_voltage_nominal_report;
   if (read_hid_report(APC_REPORT_ID_INPUT_VOLTAGE_NOMINAL, input_voltage_nominal_report)) {
@@ -1286,18 +1288,6 @@ void ApcHidProtocol::read_missing_dynamic_values(UpsData &data) {
     parse_manufacture_date_report(battery_mfr_date_report, data, true); // Battery mfr date
   }
   
-  // 6. UPS delay shutdown (Report APC_REPORT_ID_DELAY_SHUTDOWN)
-  HidReport ups_delay_shutdown_report;
-  if (read_hid_report(APC_REPORT_ID_DELAY_SHUTDOWN, ups_delay_shutdown_report)) {
-    parse_ups_delay_shutdown_report(ups_delay_shutdown_report, data);
-  }
-
-  // 7. UPS delay reboot (Report APC_REPORT_ID_DELAY_REBOOT)  
-  HidReport ups_delay_reboot_report;
-  if (read_hid_report(APC_REPORT_ID_DELAY_REBOOT, ups_delay_reboot_report)) {
-    parse_ups_delay_reboot_report(ups_delay_reboot_report, data);
-  }
-  
   // 7. Battery charge thresholds (Reports APC_REPORT_ID_CHARGE_WARNING, APC_REPORT_ID_CHARGE_LOW)
   HidReport battery_charge_warning_report;
   if (read_hid_report(APC_REPORT_ID_CHARGE_WARNING, battery_charge_warning_report)) {
@@ -1313,6 +1303,50 @@ void ApcHidProtocol::read_missing_dynamic_values(UpsData &data) {
   HidReport battery_chemistry_report;
   if (read_hid_report(battery_chemistry::REPORT_ID, battery_chemistry_report)) {
     parse_battery_chemistry_report(battery_chemistry_report, data);
+  }
+  
+}
+
+void ApcHidProtocol::apply_static_values(const UpsData &src, UpsData &dst) {
+  // Copy only values that read_static_values() and the USB string
+  // descriptors provide; everything else comes from the fresh read.
+  dst.device.manufacturer = src.device.manufacturer;
+  dst.device.model = src.device.model;
+  dst.device.serial_number = src.device.serial_number;
+  dst.device.firmware_version = src.device.firmware_version;
+  dst.device.firmware_aux = src.device.firmware_aux;
+  dst.device.mfr_date = src.device.mfr_date;
+  dst.power.realpower_nominal = src.power.realpower_nominal;
+  dst.power.input_voltage_nominal = src.power.input_voltage_nominal;
+  dst.power.input_transfer_low = src.power.input_transfer_low;
+  dst.power.input_transfer_high = src.power.input_transfer_high;
+  dst.battery.voltage_nominal = src.battery.voltage_nominal;
+  dst.battery.runtime_low = src.battery.runtime_low;
+  dst.battery.charge_low = src.battery.charge_low;
+  dst.battery.charge_warning = src.battery.charge_warning;
+  dst.battery.type = src.battery.type;
+  dst.battery.mfr_date = src.battery.mfr_date;
+}
+
+void ApcHidProtocol::read_missing_dynamic_values(UpsData &data) {
+  ESP_LOGD(APC_HID_TAG, "Reading APC missing dynamic values from NUT analysis...");
+  
+  // 1. Battery voltage actual (Report APC_REPORT_ID_BATTERY_VOLTAGE) - MISSING from original implementation
+  HidReport battery_voltage_report;
+  if (read_hid_report(APC_REPORT_ID_BATTERY_VOLTAGE, battery_voltage_report)) {
+    parse_battery_voltage_actual_report(battery_voltage_report, data);
+  }
+  
+  // 6. UPS delay shutdown (Report APC_REPORT_ID_DELAY_SHUTDOWN)
+  HidReport ups_delay_shutdown_report;
+  if (read_hid_report(APC_REPORT_ID_DELAY_SHUTDOWN, ups_delay_shutdown_report)) {
+    parse_ups_delay_shutdown_report(ups_delay_shutdown_report, data);
+  }
+
+  // 7. UPS delay reboot (Report APC_REPORT_ID_DELAY_REBOOT)  
+  HidReport ups_delay_reboot_report;
+  if (read_hid_report(APC_REPORT_ID_DELAY_REBOOT, ups_delay_reboot_report)) {
+    parse_ups_delay_reboot_report(ups_delay_reboot_report, data);
   }
   
   // Set timer values based on delay settings (negative indicates no active countdown)
@@ -1401,18 +1435,21 @@ void ApcHidProtocol::parse_battery_voltage_actual_report(const HidReport &report
 }
 
 void ApcHidProtocol::parse_input_voltage_nominal_report(const HidReport &report, UpsData &data) {
-  if (report.data.size() < 3) {
+  if (report.data.size() < 2) {
     ESP_LOGW(APC_HID_TAG, "Input voltage nominal report too short: %zu bytes", report.data.size());
     return;
   }
   
   // NUT debug: ReportID: APC_REPORT_ID_INPUT_VOLTAGE_NOMINAL, Value: 230 (UPS.Input.ConfigVoltage)
-  // Data format: [ID, volt_low, volt_high] - 16-bit little endian
-  uint16_t voltage_raw = report.data[1] | (report.data[2] << 8);
+  // Data format: [ID, volt_low, volt_high] (16-bit LE) or [ID, volt] (8-bit, e.g. Back-UPS ES 850G2)
+  uint16_t voltage_raw = report.data[1];
+  if (report.data.size() >= 3) {
+    voltage_raw |= (report.data[2] << 8);
+  }
   data.power.input_voltage_nominal = static_cast<float>(voltage_raw);
   
-  ESP_LOGI(APC_HID_TAG, "APC Input voltage nominal: %.0fV (raw: 0x%02X%02X = %d)", 
-           data.power.input_voltage_nominal, report.data[2], report.data[1], voltage_raw);
+  ESP_LOGI(APC_HID_TAG, "APC Input voltage nominal: %.0fV (raw: %u, %zu bytes)", 
+           data.power.input_voltage_nominal, (unsigned) voltage_raw, report.data.size());
 }
 
 void ApcHidProtocol::parse_input_transfer_limits_report(const HidReport &report, UpsData &data) {

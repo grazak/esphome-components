@@ -499,6 +499,11 @@ void NutServerComponent::handle_get_var(NutClient &client, const std::string &ar
     return;
   }
   
+  if (!has_ups_data()) {
+    send_error(client, "DATA-STALE");
+    return;
+  }
+
   std::string value = get_ups_var(parts[1]);
   if (!value.empty()) {
     std::string response = "VAR " + get_ups_name() + " " + parts[1] + " \"" + value + "\"\n";
@@ -948,7 +953,9 @@ std::vector<std::string> NutServerComponent::split_args(const std::string &args)
 }
 
 bool NutServerComponent::has_ups_data() const {
-  return ups_hid_ && ups_hid_->is_connected();
+  // Require a recent successful read, not just a USB connection,
+  // so clients get DATA-STALE instead of silently out-of-date values.
+  return ups_hid_ && ups_hid_->is_connected() && ups_hid_->has_fresh_data();
 }
 
 std::string NutServerComponent::get_ups_status() const {

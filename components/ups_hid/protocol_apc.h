@@ -47,6 +47,15 @@ public:
 
 private:
 
+  // Static values (strings, nominal ratings, thresholds, dates) rarely change,
+  // so read them on the first update and then every STATIC_REFRESH_CYCLES updates.
+  static constexpr uint32_t STATIC_REFRESH_CYCLES = 60;  // ~10 min at a 10 s update interval
+  bool static_cache_valid_{false};
+  uint32_t static_refresh_counter_{0};
+  UpsData static_cache_{};
+  void read_static_values(UpsData &data);
+  static void apply_static_values(const UpsData &src, UpsData &dst);
+
   bool init_hid_communication();
   bool read_hid_report(uint8_t report_id, HidReport &report);
   bool write_hid_report(const HidReport &report);
@@ -97,4 +106,4 @@ private:
 };
 
 } // namespace ups_hid
-} // namespace esphome
+} // namespace esphome
