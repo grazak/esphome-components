@@ -288,12 +288,24 @@ void NutServerComponent::disconnect_client(NutClient &client) {
 }
 
 void NutServerComponent::cleanup_inactive_clients() {
-  uint32_t now = millis();
+  // Take the lock BEFORE reading the clock. This runs in the main loop while the
+  // server task updates last_activity under the same lock. Reading millis() first
+  // meant that if the server task received a command while we waited for the
+  // lock, last_activity ended up newer than 'now', (now - last_activity)
+  // wrapped to ~4 billion and a perfectly healthy client was disconnected
+  // mid-poll ("Server terminated connection" in WinNUT).
   std::lock_guard<std::mutex> lock(clients_mutex_);
-  
+  uint32_t now = millis();
+
   for (auto &client : clients_) {
-    if (client.is_active() && (now - client.last_activity) > CLIENT_TIMEOUT_MS) {
-      ESP_LOGD(TAG, "Client timeout, disconnecting");
+    if (!client.is_active()) {
+      continue;
+    }
+    // Signed difference so a timestamp slightly in the future never counts as idle
+    int32_t idle_ms = static_cast<int32_t>(now - client.last_activity);
+    if (idle_ms > static_cast<int32_t>(CLIENT_TIMEOUT_MS)) {
+      ESP_LOGI(TAG, "Client %s idle for %u ms, disconnecting", client.remote_ip.c_str(),
+               static_cast<unsigned>(idle_ms));
       disconnect_client(client);
     }
   }
